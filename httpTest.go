@@ -33,6 +33,10 @@ func main() {
 		jsonG.GET("/echo", jsonEcho)
 		jsonG.POST("/md5", jsonMD5)
 	}
+	upload := r.Group("/upload")
+	{
+		upload.POST("/file", uploadFile)
+	}
 	// Start Server
 	r.Run(":8088")
 }
@@ -100,4 +104,12 @@ func jsonMD5(c *gin.Context) {
 	c.IndentedJSON(200, gin.H{
 		"MD5": hex.EncodeToString(hash[:]),
 	})
+}
+func uploadFile(c *gin.Context) {
+	body, err := ioutil.ReadAll(c.Request.Body)
+	fmt.Printf("File Received, size: %v\n", len(body))
+	if err != nil {
+		c.Status(500)
+	}
+	c.String(200, "Upload successful")
 }
