@@ -2,20 +2,37 @@ package main
 
 import (
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
 	"strconv"
+	"time"
 
+	"github.com/boltdb/bolt"
 	gin "gopkg.in/gin-gonic/gin.v1"
 )
 
+var db = startBolt()
+
 // TODO: Check All Requests for Size
 // TODO: Request Timeout
+func startBolt() bolt.DB {
+	db, err := bolt.Open("my.db", 0600, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
 
+	return *db
+}
+func init() {
+	// Init
+}
 func main() {
+	// Debug or No
+	gin.SetMode(gin.ReleaseMode)
 	// Router Config
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
@@ -31,11 +48,13 @@ func main() {
 		jsonG.GET("/ip", jsonIP)
 		jsonG.GET("/client", jsonClient)
 		jsonG.GET("/echo", jsonEcho)
+		jsonG.GET("/boltdb", dbTestDisplay)
 		jsonG.POST("/md5", jsonMD5)
 	}
 	upload := r.Group("/upload")
 	{
 		upload.POST("/file", uploadFile)
+		upload.POST("/boltdb", dbTest)
 	}
 	// Start Server
 	r.Run(":8088")
@@ -64,9 +83,10 @@ func jsonR(c *gin.Context) {
 
 // Returns JSON of Client IP *Does not attempt to check for proxy
 func jsonIP(c *gin.Context) {
-	clientIP, _, err := net.SplitHostPort(c.Request.RemoteAddr)
-	if err != nil {
+	clientIP := c.ClientIP
+	if clientIP == nil {
 		log.Fatal("Could not obtain client IP")
+		c.String(500, "Could not retrieve client IP")
 	}
 	c.IndentedJSON(200, gin.H{
 		"ip": clientIP,
@@ -112,4 +132,57 @@ func uploadFile(c *gin.Context) {
 		c.Status(500)
 	}
 	c.String(200, "Upload successful")
+}
+func dbTest(c *gin.Context) {
+	body, err := ioutil.ReadAll(c.Request.Body)
+	/*
+		db, err := bolt.Open("my.db", 0600, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+	*/
+	err = db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte("dbTest"))
+		if err != nil {
+			return fmt.Errorf("create bucket: %s", err)
+		}
+		timestamp := fmt.Sprintf("%v", time.Now())
+		b.Put([]byte(timestamp), body)
+		return nil
+	})
+	if err != nil {
+		c.String(500, "Internal Error: Could not insert record")
+		log.Fatal(err)
+	}
+	c.String(200, "Insert Successful")
+}
+func dbTestDisplay(c *gin.Context) {
+	db, err := bolt.Open("my.db", 0600, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	err = db.View(func(tx *bolt.Tx) error {
+		// Assume bucket exists and has keys
+		b := tx.Bucket([]byte("dbTest"))
+		c := b.Cursor()
+
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			fmt.Printf("key=%s, value=%s\n", k, v)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal("Could not display db contents")
+		c.String(500, "Error: Could not display DB")
+	}
+	c.String(200, "Display Complete")
+}
+
+// itob returns an 8-byte big endian representation of v.
+func itob(v int) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(v))
+	return b
 }
